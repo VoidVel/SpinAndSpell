@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: spinspell
+      POSTGRES_USER: spinspell
+      POSTGRES_PASSWORD: spinspell
+    ports:
+      - "5432:5432"
+    volumes:
+      - spinspell-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spinspell"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: src/SpinSpell.Server/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=spinspell;Username=spinspell;Password=spinspell
+      # Set in real deployments; a blank secret means tokens die with the process.
+      Auth__Secret: ${AUTH_SECRET:-dev-only-secret-do-not-use-in-production-32b}
+      Cors__Origins: http://localhost:5173,http://localhost:4173
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./src/SpinSpell.Web
+    # No VITE_API_URL: nginx proxies /api and /hub to the api service, so the
+    # browser only ever talks to this one origin.
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  spinspell-data:

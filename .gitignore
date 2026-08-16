@@ -1,0 +1,10 @@
+bin/
+obj/
+dist/
+node_modules/
+.vs/
+.vscode/
+*.user
+.env
+.env.local
+.DS_Store

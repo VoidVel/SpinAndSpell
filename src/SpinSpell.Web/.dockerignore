@@ -1,0 +1,6 @@
+# The web image builds with this directory as its context, so it needs its own
+# ignore list — the repo-root one does not apply here.
+node_modules/
+dist/
+.vercel/
+*.md

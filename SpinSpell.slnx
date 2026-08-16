@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SpinSpell.Domain/SpinSpell.Domain.csproj" />
+    <Project Path="src/SpinSpell.Server/SpinSpell.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SpinSpell.Domain.Tests/SpinSpell.Domain.Tests.csproj" />
+    <Project Path="tests/SpinSpell.Server.Tests/SpinSpell.Server.Tests.csproj" />
+  </Folder>
+</Solution>

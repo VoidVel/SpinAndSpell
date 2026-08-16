@@ -1,0 +1,352 @@
+@import 'tailwindcss';
+
+/*
+  §6.2 of the source of truth: a dark, saturated stage so accents and the spin
+  animation pop, and so it reads on a TV in a dim room.
+
+  COLOUR HAS FIXED MEANING HERE. Three semantic colours — Truth is always sky
+  blue, Dare is always hot red, gold is always points — and a separate palette
+  used only for player identity. The two sets do not overlap, deliberately:
+  §6.1 depends on being able to recognise yourself by colour from across a room,
+  and a hue that means two things cannot do that job.
+*/
+@theme {
+  --color-stage: #140b2e;
+  --color-stage-raised: #1e1245;
+  --color-stage-sunken: #0d0620;
+  --color-edge: #2f1f66;
+
+  --color-ink: #f4f0ff;
+  --color-ink-dim: #a294d4;
+
+  /* Truth — cool, talkative, a speech bubble. */
+  --color-truth: #38bdf8;
+  --color-truth-deep: #07395c;
+  --color-truth-glow: #38bdf866;
+
+  /* Dare — hot, dangerous, a lightning bolt. */
+  --color-dare: #ff2d55;
+  --color-dare-deep: #52061c;
+  --color-dare-glow: #ff2d5566;
+
+  /* Gold — points, scores, winners, and the primary call to action. */
+  --color-gold: #ffc300;
+  --color-gold-deep: #4a3400;
+  --color-gold-glow: #ffc30066;
+
+  /*
+    Player identity. Twelve hues containing no red, amber or gold, so a player
+    chip can never be mistaken for a Dare badge or a score. The first eight are
+    the most widely separated — real games are 4-8 people, and that is where
+    the separation has to hold. Past ten, colour is a weaker cue; that is the
+    honest cost of keeping red and gold semantic.
+  */
+  --color-player-0: #22d3ee;
+  --color-player-1: #a3e635;
+  --color-player-2: #e879f9;
+  --color-player-3: #2dd4bf;
+  --color-player-4: #a78bfa;
+  --color-player-5: #f472b6;
+  --color-player-6: #4ade80;
+  --color-player-7: #818cf8;
+  --color-player-8: #fb923c;
+  --color-player-9: #5eead4;
+  --color-player-10: #d8b4fe;
+  --color-player-11: #f0abfc;
+
+  --font-display: 'Baloo 2', 'Trebuchet MS', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* §6.3: fast and consistent, so the app never feels like it is thinking. */
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@layer base {
+  html {
+    background: var(--color-stage);
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(120% 80% at 50% -10%, #3b1f7a 0%, transparent 60%),
+      var(--color-stage);
+    background-attachment: fixed;
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    min-height: 100dvh;
+    /* A party game gets tapped fast and often; text selection just gets in the way. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  input,
+  textarea {
+    -webkit-user-select: text;
+    user-select: text;
+    font-family: inherit;
+  }
+
+  button {
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* Respect the setting, but never at the cost of the game being followable. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Big, glanceable type for the host screen, viewed from a few feet away (§6.1). */
+@utility stage-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+  font-size: clamp(2.5rem, 7vw, 6rem);
+}
+
+@utility stage-subtitle {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.25rem, 2.5vw, 2rem);
+}
+
+/* Score numbers are always gold display type, everywhere they appear. */
+@utility score-figure {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-gold);
+}
+
+/* ==========================================================================
+   The loader — three slot-machine reels
+   --------------------------------------------------------------------------
+   Adapted from a design by StealthWorm (Uiverse.io). The motion is kept
+   verbatim: the same scroll-up / scroll-down / rotation / blink keyframes, the
+   same per-column durations and delays, the same motion blur. Only the symbols
+   are reskinned, into the game's own language — a Truth bubble, a Dare bolt and
+   a gold score bar — so all three brand colours appear at once and the whole
+   thing quietly rhymes with the spin.
+
+   Class names are scoped with ss- because `.loader`, `.container`, `.love` and
+   `.death` are far too generic to sit safely in a Tailwind project.
+   ========================================================================== */
+
+.ss-loader {
+  --ss-loader-scale: 1;
+  display: flex;
+  position: relative;
+  align-items: center;
+  gap: 1rem;
+  height: calc(55px * var(--ss-loader-scale));
+  width: calc(200px * var(--ss-loader-scale));
+  overflow: hidden;
+  zoom: var(--ss-loader-scale);
+}
+
+.ss-reel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 200px;
+  position: relative;
+  align-items: center;
+}
+
+.ss-carousel {
+  display: flex;
+  gap: 1rem;
+  flex-direction: column;
+  position: absolute;
+  width: 100%;
+  transform-origin: center;
+  animation-delay: 2s;
+}
+
+/* Each column runs at its own tempo, so the three never sync up. */
+.ss-loader .ss-reel:nth-child(3) {
+  justify-content: flex-start;
+  animation: ss-scroll-up 4s infinite ease-in-out;
+  animation-delay: 3s;
+}
+
+.ss-loader .ss-reel:nth-child(2) {
+  justify-content: flex-end;
+  animation: ss-scroll-down 4s infinite ease-in-out;
+  animation-delay: 3s;
+}
+
+.ss-loader .ss-reel:nth-child(1) {
+  justify-content: flex-end;
+  animation: ss-scroll-down 3s infinite ease-in-out;
+  animation-delay: 3s;
+}
+
+/* --- Reel 1: Truth. A speech bubble, built the way the original built its
+       heart — one rotated body plus pseudo-elements for the round shoulders. */
+.ss-bubble {
+  background: var(--color-truth);
+  display: flex;
+  width: 34px;
+  height: 26px;
+  position: relative;
+  left: 6px;
+  margin: 0.8rem 4px;
+  border-radius: 12px;
+  box-shadow: 0 0 18px var(--color-truth-glow);
+}
+
+.ss-bubble::before {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  bottom: -5px;
+  left: 7px;
+  background: var(--color-truth);
+  transform: rotate(45deg);
+  border-radius: 0 0 3px;
+}
+
+.ss-bubble::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: 8px;
+  width: 18px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-truth-deep);
+}
+
+/* --- Reel 2: Dare. A bolt, keeping the original's rotation animation. */
+.ss-bolt {
+  display: flex;
+  width: 100%;
+  height: 55px;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  animation: ss-rotation 3s infinite ease-in-out;
+  animation-delay: 1s;
+}
+
+.ss-bolt::after {
+  content: '';
+  width: 30px;
+  height: 46px;
+  background: var(--color-dare);
+  clip-path: polygon(58% 0, 20% 54%, 46% 54%, 38% 100%, 82% 42%, 52% 42%);
+  filter: drop-shadow(0 0 10px var(--color-dare-glow));
+}
+
+/* --- Reel 3: the score bar, keeping the original's blinking eyes as a glint. */
+.ss-score {
+  display: flex;
+  width: 100%;
+  height: 55px;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--color-gold);
+  border-radius: 0 8px 8px;
+  padding: 8px 12px;
+  box-shadow: 0 0 20px var(--color-gold-glow);
+}
+
+.ss-score::after,
+.ss-score::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  background-color: var(--color-stage);
+  border-radius: 50%;
+  animation: ss-blink 0.5s 2 forwards;
+  animation-delay: 2s;
+}
+
+@keyframes ss-scroll-up {
+  0% {
+    transform: translateY(0);
+    filter: blur(0);
+  }
+  30% {
+    transform: translateY(-150%);
+    filter: blur(10px);
+  }
+  60% {
+    transform: translateY(0);
+    filter: blur(0px);
+  }
+}
+
+@keyframes ss-scroll-down {
+  0% {
+    transform: translateY(0);
+    filter: blur(0);
+  }
+  30% {
+    transform: translateY(150%);
+    filter: blur(10px);
+  }
+  60% {
+    transform: translateY(0);
+    filter: blur(0px);
+  }
+}
+
+@keyframes ss-rotation {
+  20%,
+  100% {
+    transform: rotate(180deg);
+  }
+}
+
+@keyframes ss-blink {
+  0% {
+    height: 0;
+  }
+  20% {
+    height: 12px;
+  }
+  100% {
+    height: 12px;
+  }
+}
+
+/*
+  Without this the global reduced-motion rule freezes the reels mid-scroll and
+  mid-blur, which does not read as "stopped", it reads as "broken". Pin them to
+  one crisp symbol each instead.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .ss-loader .ss-carousel {
+    position: static;
+    transform: none !important;
+    filter: none !important;
+  }
+
+  .ss-loader .ss-carousel > *:not(:first-child) {
+    display: none;
+  }
+
+  .ss-loader .ss-reel {
+    height: auto;
+    justify-content: center !important;
+  }
+
+  .ss-bolt {
+    transform: none !important;
+  }
+}

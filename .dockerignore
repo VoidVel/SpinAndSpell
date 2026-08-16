@@ -1,0 +1,15 @@
+# Host build output must never enter the image. A Windows obj/ folder carries a
+# project.assets.json full of C:\ paths, which makes the Linux restore inside the
+# container fail with "Unable to find fallback package folder".
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+
+.git/
+.github/
+.vs/
+.vscode/
+tests/
+*.md
+docker-compose.yml

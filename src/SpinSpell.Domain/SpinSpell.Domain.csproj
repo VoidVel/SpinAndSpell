@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    THE ONE RULE: this project has no ProjectReferences and no PackageReferences.
+    The game engine is a pure function of (state, command, seed). No I/O lives here.
+    If you are about to add a dependency, it belongs in SpinSpell.Server instead.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>
