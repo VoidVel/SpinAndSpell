@@ -7,7 +7,7 @@ public class LobbyTests
     [Fact]
     public void Players_get_distinct_colour_slots_on_join()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben", "Cleo");
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben", "Cleo");
 
         var slots = game.State.Players.Select(p => p.ColourSlot).ToList();
         Assert.Equal(slots.Count, slots.Distinct().Count());
@@ -16,7 +16,7 @@ public class LobbyTests
     [Fact]
     public void A_leaving_player_frees_their_colour_for_the_next_joiner()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
         var benSlot = game.Player("Ben").ColourSlot;
 
         game.Send(new LeaveRoom(game["Ben"]));
@@ -28,8 +28,8 @@ public class LobbyTests
     [Fact]
     public void Duplicate_names_are_refused_so_the_scoreboard_stays_readable()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana");
-        game.Send(new JoinRoom(Guid.NewGuid(), "ana", AsHost: false));
+        var game = new TestGame().WithOwner().WithPlayers("Ana");
+        game.Send(new JoinRoom(Guid.NewGuid(), "ana", AsOwner: false));
 
         Assert.Equal("name_taken", game.Rejection.Code);
     }
@@ -37,46 +37,201 @@ public class LobbyTests
     [Fact]
     public void Rejoining_with_a_known_id_is_idempotent_not_an_error()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana");
+        var game = new TestGame().WithOwner().WithPlayers("Ana");
         var before = game.State.Players.Count;
 
-        game.Send(new JoinRoom(game["Ana"], "Ana", AsHost: false));
+        game.Send(new JoinRoom(game["Ana"], "Ana", AsOwner: false));
 
         Assert.Equal(before, game.State.Players.Count);
         Assert.Empty(game.LastEvents.OfType<CommandRejected>());
     }
 
     [Fact]
+    public void A_room_can_only_have_one_owner()
+    {
+        var game = new TestGame().WithOwner().WithPlayers("Ana");
+
+        game.Send(new JoinRoom(Guid.NewGuid(), "Usurper", AsOwner: true));
+
+        Assert.Equal("owner_exists", game.Rejection.Code);
+    }
+
+    [Fact]
     public void Nobody_can_join_once_the_game_is_underway()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions();
-        game.Send(new StartGame { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions();
+        game.Send(new StartGame { ActorId = game.OwnerId });
 
-        game.Send(new JoinRoom(Guid.NewGuid(), "Latecomer", AsHost: false));
+        game.Send(new JoinRoom(Guid.NewGuid(), "Latecomer", AsOwner: false));
 
         Assert.Equal("game_in_progress", game.Rejection.Code);
     }
 
     [Fact]
-    public void Host_leaving_the_lobby_hands_off_instead_of_killing_the_room()
+    public void The_owner_leaving_the_lobby_hands_off_instead_of_killing_the_room()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
 
-        game.Send(new LeaveRoom(game.HostId));
+        game.Send(new LeaveRoom(game.OwnerId));
 
-        Assert.Equal(game["Ana"], game.Event<HostChanged>().NewHostId);
-        Assert.True(game.Player("Ana").IsHost);
+        Assert.Equal(game["Ana"], game.Event<OwnerChanged>().NewOwnerId);
+        Assert.True(game.Player("Ana").IsOwner);
     }
 
     [Fact]
-    public void Only_the_host_can_start_the_game()
+    public void Only_the_owner_can_start_the_game()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions();
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions();
 
         game.Send(new StartGame { ActorId = game["Ana"] });
 
-        Assert.Equal("not_host", game.Rejection.Code);
+        Assert.Equal("not_owner", game.Rejection.Code);
         Assert.Equal(Phase.Submission, game.State.Phase);
+    }
+}
+
+/// <summary>
+/// Two phones are a game. Nobody sits out to run a screen, so these are the
+/// cases that used to be unreachable.
+/// </summary>
+public class TwoPlayerTests
+{
+    private static TestGame Started(int seed = 1)
+    {
+        var game = new TestGame(seed).WithOwner().WithPlayers("Ana").WithQuestions(6);
+        game.Send(new StartGame { ActorId = game.OwnerId });
+        return game;
+    }
+
+    [Fact]
+    public void Two_people_are_enough_to_play()
+    {
+        var game = Started();
+
+        Assert.Equal(2, game.State.Players.Count);
+        Assert.Equal(Phase.Spinning, game.State.Phase);
+
+        game.PlayRound();
+
+        Assert.Equal(Phase.Scoreboard, game.State.Phase);
+        Assert.Equal(1, game.State.RoundsPlayed);
+    }
+
+    [Fact]
+    public void The_owner_is_dealt_into_the_rotation_like_anyone_else()
+    {
+        var game = Started();
+        var round = game.State.CurrentRound!;
+
+        Assert.Contains(game.OwnerId, new[] { round.ChallengerId, round.TargetId });
+    }
+
+    [Fact]
+    public void The_two_of_them_swap_roles_every_round()
+    {
+        // Rule 4 of Selection keeps the previous target out of the target seat,
+        // and with exactly two candidates that makes the swap strict.
+        var game = Started();
+        var targets = new List<Guid>();
+
+        for (var i = 0; i < 4; i++)
+        {
+            var round = game.State.CurrentRound!;
+            targets.Add(round.TargetId);
+            Assert.NotEqual(round.ChallengerId, round.TargetId);
+
+            game.PlayRound();
+            game.Send(new NextRound { ActorId = game.OwnerId });
+        }
+
+        Assert.Equal(2, targets.Distinct().Count());
+        Assert.Equal(targets[0], targets[2]);
+        Assert.Equal(targets[1], targets[3]);
+    }
+}
+
+public class JudgingTests
+{
+    private static TestGame Revealed(int seed = 1)
+    {
+        var game = new TestGame(seed).WithOwner().WithPlayers("Ana", "Ben").WithQuestions(6);
+        game.Send(new StartGame { ActorId = game.OwnerId });
+        game.Tick();
+
+        var round = game.State.CurrentRound!;
+        game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
+        return game;
+    }
+
+    [Fact]
+    public void The_challenger_judges_the_round_they_set_up()
+    {
+        var game = Revealed();
+        var round = game.State.CurrentRound!;
+
+        game.Send(new Judge(RoundOutcome.Success) { ActorId = round.ChallengerId });
+
+        Assert.Equal(Phase.Celebration, game.State.Phase);
+        Assert.Equal(1, game.State.PlayerById(round.TargetId)!.Score);
+    }
+
+    [Fact]
+    public void The_target_cannot_mark_their_own_homework()
+    {
+        var game = Revealed();
+        var round = game.State.CurrentRound!;
+
+        game.Send(new Judge(RoundOutcome.Success) { ActorId = round.TargetId });
+
+        Assert.Equal("not_judge", game.Rejection.Code);
+        Assert.Equal(Phase.Revealed, game.State.Phase);
+    }
+
+    [Fact]
+    public void A_bystander_cannot_call_the_round_either()
+    {
+        var game = Revealed();
+        var round = game.State.CurrentRound!;
+        var bystander = game.State.Players
+            .First(p => p.Id != round.ChallengerId && p.Id != round.TargetId);
+
+        game.Send(new Judge(RoundOutcome.Skipped) { ActorId = bystander.Id });
+
+        Assert.Equal("not_judge", game.Rejection.Code);
+    }
+
+    [Fact]
+    public void The_owner_steps_in_when_the_challenger_has_dropped()
+    {
+        // Otherwise a locked phone in the challenger's pocket ends the party.
+        var game = Revealed();
+        var round = game.State.CurrentRound!;
+
+        // Hand the room to someone who is definitely not the challenger, so the
+        // fallback is what is being exercised rather than the ordinary path.
+        var bystander = game.State.Players
+            .First(p => p.Id != round.ChallengerId && p.Id != round.TargetId);
+        game.Send(new TransferOwner(bystander.Id) { ActorId = game.OwnerId });
+
+        game.Send(new SetConnected(round.ChallengerId, false));
+        game.Send(new Judge(RoundOutcome.Success) { ActorId = bystander.Id });
+
+        Assert.Equal(Phase.Celebration, game.State.Phase);
+    }
+
+    [Fact]
+    public void The_owner_cannot_overrule_a_challenger_who_is_still_here()
+    {
+        var game = Revealed();
+        var round = game.State.CurrentRound!;
+        var bystander = game.State.Players
+            .First(p => p.Id != round.ChallengerId && p.Id != round.TargetId);
+        game.Send(new TransferOwner(bystander.Id) { ActorId = game.OwnerId });
+
+        game.Send(new Judge(RoundOutcome.Skipped) { ActorId = bystander.Id });
+
+        Assert.Equal("not_judge", game.Rejection.Code);
+        Assert.Equal(Phase.Revealed, game.State.Phase);
     }
 }
 
@@ -85,46 +240,57 @@ public class SubmissionTests
     [Fact]
     public void The_game_will_not_start_until_everyone_has_written_their_share()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         for (var i = 0; i < 4; i++)
         {
             game.Send(new SubmitQuestion(Guid.NewGuid(), QuestionKind.Truth, $"q{i}") { ActorId = game["Ana"] });
         }
 
-        game.Send(new StartGame { ActorId = game.HostId });
+        game.Send(new StartGame { ActorId = game.OwnerId });
 
         Assert.Equal("questions_missing", game.Rejection.Code);
         Assert.Contains("Ben", game.Rejection.Message);
     }
 
     [Fact]
-    public void The_host_does_not_have_to_write_questions_when_they_are_not_playing()
+    public void The_owner_writes_their_share_too()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions();
+        // They are playing, so the pot is short until they have contributed.
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
-        game.Send(new StartGame { ActorId = game.HostId });
+        foreach (var name in new[] { "Ana", "Ben" })
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                game.Send(new SubmitQuestion(Guid.NewGuid(), QuestionKind.Truth, $"{name} q{i}")
+                { ActorId = game[name] });
+            }
+        }
+
+        game.Send(new StartGame { ActorId = game.OwnerId });
+
+        Assert.Equal("questions_missing", game.Rejection.Code);
+        Assert.Contains("Owner", game.Rejection.Message);
+    }
+
+    [Fact]
+    public void Everyone_having_written_lets_the_game_go()
+    {
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions();
+
+        game.Send(new StartGame { ActorId = game.OwnerId });
 
         Assert.Equal(Phase.Spinning, game.State.Phase);
     }
 
     [Fact]
-    public void A_playing_host_does_have_to_write_questions()
-    {
-        var game = new TestGame(settings: new RoomSettings(HostPlays: true))
-            .WithHost().WithPlayers("Ana", "Ben").WithQuestions();
-
-        game.Send(new StartGame { ActorId = game.HostId });
-
-        Assert.Equal("questions_missing", game.Rejection.Code);
-    }
-
-    [Fact]
     public void Resubmitting_the_same_id_does_not_double_up()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         var id = Guid.NewGuid();
         game.Send(new SubmitQuestion(id, QuestionKind.Dare, "Sing something") { ActorId = game["Ana"] });
@@ -136,8 +302,8 @@ public class SubmissionTests
     [Fact]
     public void Blank_and_oversized_questions_are_refused()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         game.Send(new SubmitQuestion(Guid.NewGuid(), QuestionKind.Truth, "   ") { ActorId = game["Ana"] });
         Assert.Equal("invalid_question", game.Rejection.Code);
@@ -149,8 +315,8 @@ public class SubmissionTests
     [Fact]
     public void You_can_reword_your_own_question_before_it_is_played()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         var id = Guid.NewGuid();
         game.Send(new SubmitQuestion(id, QuestionKind.Dare, "Sing something") { ActorId = game["Ana"] });
@@ -163,8 +329,8 @@ public class SubmissionTests
     [Fact]
     public void You_cannot_reword_someone_elses_question()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         var id = Guid.NewGuid();
         game.Send(new SubmitQuestion(id, QuestionKind.Truth, "Mine") { ActorId = game["Ana"] });
@@ -177,9 +343,9 @@ public class SubmissionTests
     [Fact]
     public void A_question_cannot_be_reworded_once_it_has_been_played()
     {
-        // Otherwise the text on the host screen and the text in the pot diverge.
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions(6);
-        game.Send(new StartGame { ActorId = game.HostId });
+        // Otherwise the text everyone just read and the text in the pot diverge.
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions(6);
+        game.Send(new StartGame { ActorId = game.OwnerId });
         game.Tick();
 
         var round = game.State.CurrentRound!;
@@ -197,8 +363,8 @@ public class SubmissionTests
     [Fact]
     public void Rewording_a_question_to_nothing_is_refused()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         var id = Guid.NewGuid();
         game.Send(new SubmitQuestion(id, QuestionKind.Truth, "Keep me") { ActorId = game["Ana"] });
@@ -211,8 +377,8 @@ public class SubmissionTests
     [Fact]
     public void You_can_only_delete_your_own_questions()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben");
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben");
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         var id = Guid.NewGuid();
         game.Send(new SubmitQuestion(id, QuestionKind.Truth, "Mine") { ActorId = game["Ana"] });
@@ -225,7 +391,7 @@ public class SubmissionTests
 
 public class QuestionModeTests
 {
-    private static TestGame InLobby() => new TestGame().WithHost().WithPlayers("Ana", "Ben");
+    private static TestGame InLobby() => new TestGame().WithOwner().WithPlayers("Ana", "Ben");
 
     [Fact]
     public void A_room_takes_both_kinds_by_default()
@@ -240,24 +406,24 @@ public class QuestionModeTests
     [Theory]
     [InlineData(QuestionMode.TruthsOnly)]
     [InlineData(QuestionMode.DaresOnly)]
-    public void The_host_sets_the_mode_in_the_lobby(QuestionMode mode)
+    public void The_owner_sets_the_mode_in_the_lobby(QuestionMode mode)
     {
         var game = InLobby();
 
-        game.Send(new SetQuestionMode(mode) { ActorId = game.HostId });
+        game.Send(new SetQuestionMode(mode) { ActorId = game.OwnerId });
 
         Assert.Equal(mode, game.State.Settings.Mode);
         Assert.Equal(mode, game.Event<QuestionModeChanged>().Mode);
     }
 
     [Fact]
-    public void Only_the_host_sets_the_mode()
+    public void Only_the_owner_sets_the_mode()
     {
         var game = InLobby();
 
         game.Send(new SetQuestionMode(QuestionMode.DaresOnly) { ActorId = game["Ana"] });
 
-        Assert.Equal("not_host", game.Rejection.Code);
+        Assert.Equal("not_owner", game.Rejection.Code);
         Assert.Equal(QuestionMode.Both, game.State.Settings.Mode);
     }
 
@@ -267,9 +433,9 @@ public class QuestionModeTests
         // Otherwise a late switch to dares-only would strand a pool of truths
         // and the game would have nothing left to deal.
         var game = InLobby();
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
-        game.Send(new SetQuestionMode(QuestionMode.DaresOnly) { ActorId = game.HostId });
+        game.Send(new SetQuestionMode(QuestionMode.DaresOnly) { ActorId = game.OwnerId });
 
         Assert.Equal("mode_locked", game.Rejection.Code);
         Assert.Equal(QuestionMode.Both, game.State.Settings.Mode);
@@ -280,7 +446,7 @@ public class QuestionModeTests
     {
         var game = InLobby();
 
-        game.Send(new SetQuestionMode(QuestionMode.Both) { ActorId = game.HostId });
+        game.Send(new SetQuestionMode(QuestionMode.Both) { ActorId = game.OwnerId });
 
         Assert.Empty(game.LastEvents);
     }
@@ -289,8 +455,8 @@ public class QuestionModeTests
     public void A_truths_only_room_refuses_dares()
     {
         var game = InLobby();
-        game.Send(new SetQuestionMode(QuestionMode.TruthsOnly) { ActorId = game.HostId });
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        game.Send(new SetQuestionMode(QuestionMode.TruthsOnly) { ActorId = game.OwnerId });
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         game.Send(new SubmitQuestion(Guid.NewGuid(), QuestionKind.Dare, "Lick the floor") { ActorId = game["Ana"] });
         Assert.Equal("wrong_kind", game.Rejection.Code);
@@ -304,8 +470,8 @@ public class QuestionModeTests
     public void A_dares_only_room_refuses_truths()
     {
         var game = InLobby();
-        game.Send(new SetQuestionMode(QuestionMode.DaresOnly) { ActorId = game.HostId });
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        game.Send(new SetQuestionMode(QuestionMode.DaresOnly) { ActorId = game.OwnerId });
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         game.Send(new SubmitQuestion(Guid.NewGuid(), QuestionKind.Truth, "Worst date?") { ActorId = game["Ana"] });
         Assert.Equal("wrong_kind", game.Rejection.Code);
@@ -320,9 +486,9 @@ public class QuestionModeTests
     {
         // The hand dealer balances truth against dare; with one kind absent it
         // has to fall through cleanly rather than deal short.
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben", "Cleo");
-        game.Send(new SetQuestionMode(QuestionMode.DaresOnly) { ActorId = game.HostId });
-        game.Send(new OpenSubmissions { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben", "Cleo");
+        game.Send(new SetQuestionMode(QuestionMode.DaresOnly) { ActorId = game.OwnerId });
+        game.Send(new OpenSubmissions { ActorId = game.OwnerId });
 
         foreach (var (name, id) in game.Players)
         {
@@ -332,7 +498,7 @@ public class QuestionModeTests
             }
         }
 
-        game.Send(new StartGame { ActorId = game.HostId });
+        game.Send(new StartGame { ActorId = game.OwnerId });
         game.Tick();
 
         var round = game.State.CurrentRound!;
@@ -347,8 +513,8 @@ public class QuestionModeTests
     [Fact]
     public void A_mid_game_top_up_still_respects_the_mode()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions(6);
-        game.Send(new StartGame { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions(6);
+        game.Send(new StartGame { ActorId = game.OwnerId });
         game.PlayRound();
 
         // Scoreboard phase allows submissions; the mode must still apply there.
@@ -364,8 +530,8 @@ public class RoundLoopTests
 {
     private static TestGame Started(int seed = 1)
     {
-        var game = new TestGame(seed).WithHost().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(6);
-        game.Send(new StartGame { ActorId = game.HostId });
+        var game = new TestGame(seed).WithOwner().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(6);
+        game.Send(new StartGame { ActorId = game.OwnerId });
         return game;
     }
 
@@ -409,9 +575,9 @@ public class RoundLoopTests
             }
 
             game.Send(new ChooseQuestion(current.Hand[0]) { ActorId = current.ChallengerId });
-            game.Send(new Judge(RoundOutcome.Success) { ActorId = game.HostId });
+            game.Send(new Judge(RoundOutcome.Success) { ActorId = current.ChallengerId });
             game.Tick();
-            game.Send(new NextRound { ActorId = game.HostId });
+            game.Send(new NextRound { ActorId = game.OwnerId });
         }
     }
 
@@ -422,7 +588,7 @@ public class RoundLoopTests
         game.Tick();
 
         var round = game.State.CurrentRound!;
-        var someoneElse = game.State.Players.First(p => p.Id != round.ChallengerId && !p.IsHost);
+        var someoneElse = game.State.Players.First(p => p.Id != round.ChallengerId);
 
         game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = someoneElse.Id });
 
@@ -470,7 +636,7 @@ public class RoundLoopTests
         var target = game.State.PlayerById(round.TargetId)!;
 
         game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
-        game.Send(new Judge(RoundOutcome.Success) { ActorId = game.HostId });
+        game.Send(new Judge(RoundOutcome.Success) { ActorId = round.ChallengerId });
 
         Assert.Equal(target.Score + 1, game.State.PlayerById(round.TargetId)!.Score);
         Assert.Equal(Phase.Celebration, game.State.Phase);
@@ -484,25 +650,11 @@ public class RoundLoopTests
 
         var round = game.State.CurrentRound!;
         game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
-        game.Send(new Judge(RoundOutcome.Skipped) { ActorId = game.HostId });
+        game.Send(new Judge(RoundOutcome.Skipped) { ActorId = round.ChallengerId });
 
         Assert.Equal(0, game.State.PlayerById(round.TargetId)!.Score);
         Assert.True(game.State.QuestionById(round.Hand[0])!.Used);
         Assert.Equal(1, game.State.Skips);
-    }
-
-    [Fact]
-    public void Only_the_host_judges()
-    {
-        var game = Started();
-        game.Tick();
-
-        var round = game.State.CurrentRound!;
-        game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
-        game.Send(new Judge(RoundOutcome.Success) { ActorId = round.ChallengerId });
-
-        Assert.Equal("not_host", game.Rejection.Code);
-        Assert.Equal(Phase.Revealed, game.State.Phase);
     }
 
     [Fact]
@@ -518,15 +670,28 @@ public class RoundLoopTests
         game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
         Assert.Equal(Phase.Revealed, game.State.Phase);
 
-        game.Send(new Judge(RoundOutcome.Success) { ActorId = game.HostId });
+        game.Send(new Judge(RoundOutcome.Success) { ActorId = round.ChallengerId });
         Assert.Equal(Phase.Celebration, game.State.Phase);
 
         game.Tick();
         Assert.Equal(Phase.Scoreboard, game.State.Phase);
 
-        game.Send(new NextRound { ActorId = game.HostId });
+        game.Send(new NextRound { ActorId = game.OwnerId });
         Assert.Equal(Phase.Spinning, game.State.Phase);
         Assert.Equal(1, game.State.RoundsPlayed);
+    }
+
+    [Fact]
+    public void Only_the_owner_advances_the_round()
+    {
+        var game = Started();
+        game.PlayRound();
+
+        var someoneElse = game.State.Players.First(p => !p.IsOwner);
+        game.Send(new NextRound { ActorId = someoneElse.Id });
+
+        Assert.Equal("not_owner", game.Rejection.Code);
+        Assert.Equal(Phase.Scoreboard, game.State.Phase);
     }
 
     [Fact]
@@ -536,7 +701,7 @@ public class RoundLoopTests
         game.PlayRound();
         var first = game.State.FirstChallengeAt;
 
-        game.Send(new NextRound { ActorId = game.HostId });
+        game.Send(new NextRound { ActorId = game.OwnerId });
         game.PlayRound();
 
         Assert.NotNull(first);
@@ -548,8 +713,8 @@ public class TimerAndDisconnectTests
 {
     private static TestGame Started(RoomSettings? settings = null)
     {
-        var game = new TestGame(settings: settings).WithHost().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(6);
-        game.Send(new StartGame { ActorId = game.HostId });
+        var game = new TestGame(settings: settings).WithOwner().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(6);
+        game.Send(new StartGame { ActorId = game.OwnerId });
         return game;
     }
 
@@ -581,7 +746,7 @@ public class TimerAndDisconnectTests
     }
 
     [Fact]
-    public void The_reveal_timer_only_nudges_the_host_screen_along()
+    public void The_reveal_timer_only_nudges_the_room_along()
     {
         var game = Started(new RoomSettings(TimerEnabled: true, RevealTimerSeconds: 30));
         game.Tick();
@@ -594,7 +759,7 @@ public class TimerAndDisconnectTests
 
         // Judging, not auto-skipped — §9.4 wants energy, not punishment.
         Assert.Equal(Phase.Judging, game.State.Phase);
-        game.Send(new Judge(RoundOutcome.Success) { ActorId = game.HostId });
+        game.Send(new Judge(RoundOutcome.Success) { ActorId = round.ChallengerId });
         Assert.Equal(Phase.Celebration, game.State.Phase);
     }
 
@@ -629,20 +794,21 @@ public class TimerAndDisconnectTests
 
         game.Send(new SetConnected(game["Ana"], false));
         game.Send(new SetConnected(game["Ben"], false));
-        game.Send(new NextRound { ActorId = game.HostId });
+        game.Send(new SetConnected(game["Cleo"], false));
+        game.Send(new NextRound { ActorId = game.OwnerId });
 
         Assert.Equal("not_enough_players", game.Rejection.Code);
     }
 
     [Fact]
-    public void Host_handoff_moves_the_badge_exactly_once()
+    public void Owner_handoff_moves_the_badge_exactly_once()
     {
         var game = Started();
 
-        game.Send(new TransferHost(game["Ana"]) { ActorId = game.HostId });
+        game.Send(new TransferOwner(game["Ana"]) { ActorId = game.OwnerId });
 
-        Assert.Single(game.State.Players, p => p.IsHost);
-        Assert.True(game.Player("Ana").IsHost);
+        Assert.Single(game.State.Players, p => p.IsOwner);
+        Assert.True(game.Player("Ana").IsOwner);
     }
 
     [Fact]
@@ -651,9 +817,9 @@ public class TimerAndDisconnectTests
         var game = Started();
 
         // No ActorId: the grace period lapsed and the server is reassigning (§9.5).
-        game.Send(new TransferHost(game["Ben"]));
+        game.Send(new TransferOwner(game["Ben"]));
 
-        Assert.True(game.Player("Ben").IsHost);
+        Assert.True(game.Player("Ben").IsOwner);
     }
 }
 
@@ -662,12 +828,12 @@ public class PoolExhaustionTests
     [Fact]
     public void The_room_warns_when_the_pool_is_running_low()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions(4);
-        game.Send(new StartGame { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions(4);
+        game.Send(new StartGame { ActorId = game.OwnerId });
 
         var sawWarning = false;
 
-        for (var i = 0; i < 6 && game.State.Phase != Phase.Ended; i++)
+        for (var i = 0; i < 12 && game.State.Phase != Phase.Ended; i++)
         {
             game.Tick();
             if (game.State.CurrentRound is not { Hand.Count: > 0 } round)
@@ -678,29 +844,29 @@ public class PoolExhaustionTests
             game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
             sawWarning |= game.Has<QuestionPoolLow>();
 
-            game.Send(new Judge(RoundOutcome.Success) { ActorId = game.HostId });
+            game.Send(new Judge(RoundOutcome.Success) { ActorId = round.ChallengerId });
             game.Tick();
 
             if (game.State.Phase == Phase.Scoreboard)
             {
-                game.Send(new NextRound { ActorId = game.HostId });
+                game.Send(new NextRound { ActorId = game.OwnerId });
             }
         }
 
-        Assert.True(sawWarning, "The host screen never got a low-pool warning before running dry.");
+        Assert.True(sawWarning, "The room never got a low-pool warning before running dry.");
     }
 
     [Fact]
     public void Running_completely_dry_ends_the_game_rather_than_hanging()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions(4);
-        game.Send(new StartGame { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions(4);
+        game.Send(new StartGame { ActorId = game.OwnerId });
 
-        for (var i = 0; i < 20 && game.State.Phase != Phase.Ended; i++)
+        for (var i = 0; i < 40 && game.State.Phase != Phase.Ended; i++)
         {
             if (game.State.Phase == Phase.Scoreboard)
             {
-                game.Send(new NextRound { ActorId = game.HostId });
+                game.Send(new NextRound { ActorId = game.OwnerId });
                 if (game.Has<CommandRejected>())
                 {
                     break;
@@ -712,7 +878,7 @@ public class PoolExhaustionTests
             if (game.State.CurrentRound is { ChosenQuestionId: null, Hand.Count: > 0 } round)
             {
                 game.Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
-                game.Send(new Judge(RoundOutcome.Success) { ActorId = game.HostId });
+                game.Send(new Judge(RoundOutcome.Success) { ActorId = round.ChallengerId });
                 game.Tick();
             }
         }
@@ -725,31 +891,34 @@ public class PoolExhaustionTests
 public class EndGameTests
 {
     [Fact]
-    public void The_host_can_end_anytime_and_standings_come_back_sorted()
+    public void The_owner_can_end_anytime_and_standings_come_back_sorted()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(6);
-        game.Send(new StartGame { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(6);
+        game.Send(new StartGame { ActorId = game.OwnerId });
         game.PlayRound();
 
-        game.Send(new EndGame { ActorId = game.HostId });
+        game.Send(new EndGame { ActorId = game.OwnerId });
 
         var standings = game.Event<GameEnded>().FinalStandings;
 
         Assert.Equal(Phase.Ended, game.State.Phase);
         Assert.NotNull(game.State.EndedAt);
         Assert.Equal(standings.OrderByDescending(p => p.Score).Select(p => p.Id), standings.Select(p => p.Id));
-        Assert.DoesNotContain(standings, p => p.IsHost); // a non-playing host is not in the results
+
+        // The owner played, so the owner is ranked with everybody else.
+        Assert.Contains(standings, p => p.IsOwner);
+        Assert.Equal(game.State.Players.Count, standings.Count);
     }
 
     [Fact]
     public void Ending_twice_is_a_no_op()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions();
-        game.Send(new StartGame { ActorId = game.HostId });
-        game.Send(new EndGame { ActorId = game.HostId });
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions();
+        game.Send(new StartGame { ActorId = game.OwnerId });
+        game.Send(new EndGame { ActorId = game.OwnerId });
         var endedAt = game.State.EndedAt;
 
-        game.Send(new EndGame { ActorId = game.HostId });
+        game.Send(new EndGame { ActorId = game.OwnerId });
 
         Assert.Equal(endedAt, game.State.EndedAt);
     }
@@ -762,13 +931,13 @@ public class DeterminismTests
     {
         static GameState Run()
         {
-            var game = new TestGame(seed: 777).WithHost().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(8);
-            game.Send(new StartGame { ActorId = game.HostId });
+            var game = new TestGame(seed: 777).WithOwner().WithPlayers("Ana", "Ben", "Cleo").WithQuestions(8);
+            game.Send(new StartGame { ActorId = game.OwnerId });
 
             for (var i = 0; i < 5; i++)
             {
                 game.PlayRound(i % 3 == 0 ? RoundOutcome.Skipped : RoundOutcome.Success);
-                game.Send(new NextRound { ActorId = game.HostId });
+                game.Send(new NextRound { ActorId = game.OwnerId });
             }
             return game.State;
         }
@@ -787,12 +956,12 @@ public class DeterminismTests
     [Fact]
     public void A_malformed_command_is_rejected_rather_than_faulting_the_room()
     {
-        var game = new TestGame().WithHost().WithPlayers("Ana", "Ben").WithQuestions();
+        var game = new TestGame().WithOwner().WithPlayers("Ana", "Ben").WithQuestions();
 
         // Commands from a stranger, out of phase, and for things that do not exist.
         game.Send(new Judge(RoundOutcome.Success) { ActorId = Guid.NewGuid() });
         game.Send(new ChooseQuestion(Guid.NewGuid()) { ActorId = game["Ana"] });
-        game.Send(new NextRound { ActorId = game.HostId });
+        game.Send(new NextRound { ActorId = game.OwnerId });
         game.Send(new DeleteQuestion(Guid.NewGuid()) { ActorId = game["Ana"] });
 
         Assert.Equal(Phase.Submission, game.State.Phase);

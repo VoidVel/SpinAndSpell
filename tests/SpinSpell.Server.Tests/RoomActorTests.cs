@@ -67,7 +67,7 @@ internal sealed class InMemoryStore : IRoomStore
 
 public class RoomActorTests
 {
-    private static (RoomActor actor, RecordingBroadcaster bus, InMemoryStore store, Guid host, Guid[] players)
+    private static (RoomActor actor, RecordingBroadcaster bus, InMemoryStore store, Guid owner, Guid[] players)
         StartedGame(RoomSettings? settings = null)
     {
         var bus = new RecordingBroadcaster();
@@ -76,16 +76,18 @@ public class RoomActorTests
         var state = GameState.NewRoom(Guid.NewGuid(), "TEST", settings ?? new RoomSettings(), DateTimeOffset.UtcNow);
         var actor = new RoomActor(state, store, bus, new SystemClock(), NullLogger.Instance);
 
-        var host = Guid.NewGuid();
-        var players = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        // The owner is the first entry in players, because they play too and
+        // therefore owe the pot the same share of questions as everyone else.
+        var owner = Guid.NewGuid();
+        var players = new[] { owner, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
 
-        actor.Tell(new JoinRoom(host, "Host", AsHost: true));
-        foreach (var (id, i) in players.Select((id, i) => (id, i)))
+        actor.Tell(new JoinRoom(owner, "Owner", AsOwner: true));
+        foreach (var (id, i) in players.Skip(1).Select((id, i) => (id, i)))
         {
-            actor.Tell(new JoinRoom(id, $"P{i}", AsHost: false));
+            actor.Tell(new JoinRoom(id, $"P{i}", AsOwner: false));
         }
 
-        actor.Tell(new OpenSubmissions { ActorId = host });
+        actor.Tell(new OpenSubmissions { ActorId = owner });
 
         foreach (var id in players)
         {
@@ -96,7 +98,7 @@ public class RoomActorTests
             }
         }
 
-        return (actor, bus, store, host, players);
+        return (actor, bus, store, owner, players);
     }
 
     /// <summary>
@@ -113,11 +115,11 @@ public class RoomActorTests
     [Fact]
     public async Task Phase_timers_keep_firing_across_many_rounds_and_never_evict_a_live_room()
     {
-        var (actor, bus, _, host, _) = StartedGame();
+        var (actor, bus, _, owner, _) = StartedGame();
 
-        Assert.True(await bus.WaitFor<SubmissionProgress>(18), "questions never landed");
+        Assert.True(await bus.WaitFor<SubmissionProgress>(24), "questions never landed");
 
-        actor.Tell(new StartGame { ActorId = host });
+        actor.Tell(new StartGame { ActorId = owner });
 
         const int rounds = 6;
 
@@ -132,13 +134,13 @@ public class RoomActorTests
 
             Assert.True(await bus.WaitFor<QuestionRevealed>(round), $"round {round}: no reveal");
 
-            actor.Tell(new Judge(RoundOutcome.Success) { ActorId = host });
+            actor.Tell(new Judge(RoundOutcome.Success) { ActorId = current.ChallengerId });
 
             // Celebration -> Scoreboard is also timer-driven.
             Assert.True(await bus.WaitFor<RoundJudged>(round), $"round {round}: no judgment");
             await WaitForPhase(actor, Phase.Scoreboard);
 
-            if (round < rounds) actor.Tell(new NextRound { ActorId = host });
+            if (round < rounds) actor.Tell(new NextRound { ActorId = owner });
         }
 
         Assert.Equal(rounds, actor.Snapshot.RoundsPlayed);
@@ -148,11 +150,11 @@ public class RoomActorTests
     [Fact]
     public async Task A_stalled_challenger_does_not_freeze_the_room()
     {
-        var (actor, bus, _, host, _) = StartedGame(
+        var (actor, bus, _, owner, _) = StartedGame(
             new RoomSettings(MinQuestionsPerPlayer: 4, ChoosingTimeoutSeconds: 2));
 
-        Assert.True(await bus.WaitFor<SubmissionProgress>(18));
-        actor.Tell(new StartGame { ActorId = host });
+        Assert.True(await bus.WaitFor<SubmissionProgress>(24));
+        actor.Tell(new StartGame { ActorId = owner });
 
         // Nobody ever chooses. The engine should pick for them and move on.
         Assert.True(await bus.WaitFor<QuestionRevealed>(1, timeoutMs: 15_000),
@@ -169,13 +171,13 @@ public class RoomActorTests
         var state = GameState.NewRoom(Guid.NewGuid(), "BURST", new RoomSettings(), DateTimeOffset.UtcNow);
         var actor = new RoomActor(state, store, bus, new SystemClock(), NullLogger.Instance);
 
-        var host = Guid.NewGuid();
-        actor.Tell(new JoinRoom(host, "Host", AsHost: true));
+        var owner = Guid.NewGuid();
+        actor.Tell(new JoinRoom(owner, "Owner", AsOwner: true));
 
         var player = Guid.NewGuid();
-        actor.Tell(new JoinRoom(player, "P0", AsHost: false));
-        actor.Tell(new JoinRoom(Guid.NewGuid(), "P1", AsHost: false));
-        actor.Tell(new OpenSubmissions { ActorId = host });
+        actor.Tell(new JoinRoom(player, "P0", AsOwner: false));
+        actor.Tell(new JoinRoom(Guid.NewGuid(), "P1", AsOwner: false));
+        actor.Tell(new OpenSubmissions { ActorId = owner });
 
         // Fire from several threads at once; the mailbox must serialise them.
         await Task.WhenAll(Enumerable.Range(0, 8).Select(t => Task.Run(() =>
@@ -196,19 +198,19 @@ public class RoomActorTests
     [Fact]
     public async Task State_is_persisted_on_phase_change_not_on_every_event()
     {
-        var (actor, bus, store, host, _) = StartedGame();
+        var (actor, bus, store, owner, _) = StartedGame();
 
-        Assert.True(await bus.WaitFor<SubmissionProgress>(18));
-        var afterEighteenQuestions = store.Saves;
+        Assert.True(await bus.WaitFor<SubmissionProgress>(24));
+        var afterTwentyFourQuestions = store.Saves;
 
-        actor.Tell(new StartGame { ActorId = host });
+        actor.Tell(new StartGame { ActorId = owner });
         Assert.True(await bus.WaitFor<HandDealt>(1));
 
-        // Eighteen submissions sat inside one phase and cost at most a couple of
+        // Two dozen submissions sat inside one phase and cost at most a couple of
         // writes; the spin and the deal are phase changes and do cost writes.
-        Assert.True(afterEighteenQuestions <= 3,
-            $"submissions triggered {afterEighteenQuestions} writes — persistence has crept into the hot path.");
-        Assert.True(store.Saves > afterEighteenQuestions);
+        Assert.True(afterTwentyFourQuestions <= 3,
+            $"submissions triggered {afterTwentyFourQuestions} writes — persistence has crept into the hot path.");
+        Assert.True(store.Saves > afterTwentyFourQuestions);
 
         await actor.DisposeAsync();
     }

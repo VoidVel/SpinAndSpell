@@ -2,8 +2,7 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import { Home } from './features/entry/Home'
-import { HostView } from './features/host/HostView'
-import { PlayerView } from './features/player/PlayerView'
+import { GameView } from './features/game/GameView'
 import { Waiting } from './design/Loader'
 import { useGame } from './store/gameStore'
 
@@ -73,9 +72,9 @@ function Room() {
     )
   }
 
-  // §6.4: two distinct design modes sharing one visual language, not one
-  // responsive layout trying to do both jobs.
-  return room.youAreHost ? <HostView room={room} /> : <PlayerView room={room} />
+  // One view for everyone. Whoever made the room is playing in it, so there
+  // is nothing left for a second layout to be.
+  return <GameView room={room} />
 }
 
 /**

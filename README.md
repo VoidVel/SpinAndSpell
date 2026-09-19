@@ -1,7 +1,7 @@
 # Spin Spell
 
 A real-time, phone-based party game. Friends write the truths and dares, the app
-picks who's up, and the drama plays out on the host's screen.
+picks who's up, and the drama plays out on everyone's phone.
 
 - **Product & design decisions:** [spin-spell-source-of-truth.md](spin-spell-source-of-truth.md)
 - **Technical plan:** [spin-spell-development-plan.md](spin-spell-development-plan.md)
@@ -47,7 +47,7 @@ itself mid-game.
 
 The smoke script drives four clients through a complete game and asserts the
 privacy rules (the challenger's hand never reaches anyone else) and the
-authority rules (only the host judges). Run it against the LAN URL too — the
+authority rules (only the challenger judges). Run it against the LAN URL too — the
 proxied WebSocket path is not the same code path as localhost.
 
 Neither replaces playing it with real people, which is the point of the
@@ -58,7 +58,7 @@ playtest gate in the plan.
 ```
 src/SpinSpell.Domain     the game, as a pure function. No dependencies. Ever.
 src/SpinSpell.Server     SignalR hub, room actors, Postgres, tokens
-src/SpinSpell.Web        React host screen + player phone screens
+src/SpinSpell.Web        React client — one phone view for every player
 tests/                   domain suite
 ```
 

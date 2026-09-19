@@ -20,12 +20,17 @@ internal sealed class TestGame
         State = GameState.NewRoom(Guid.NewGuid(), "ABC123", settings ?? new RoomSettings(), _now);
     }
 
-    public Guid HostId { get; private set; }
+    public Guid OwnerId { get; private set; }
 
-    public TestGame WithHost(string name = "Host")
+    /// <summary>
+    /// The owner is registered alongside everyone else, because they are a
+    /// player like everyone else — they write questions, spin and score.
+    /// </summary>
+    public TestGame WithOwner(string name = "Owner")
     {
-        HostId = Guid.NewGuid();
-        Send(new JoinRoom(HostId, name, AsHost: true));
+        OwnerId = Guid.NewGuid();
+        Players[name] = OwnerId;
+        Send(new JoinRoom(OwnerId, name, AsOwner: true));
         return this;
     }
 
@@ -37,17 +42,17 @@ internal sealed class TestGame
         {
             var id = Guid.NewGuid();
             Players[name] = id;
-            Send(new JoinRoom(id, name, AsHost: false));
+            Send(new JoinRoom(id, name, AsOwner: false));
         }
         return this;
     }
 
     public Guid this[string name] => Players[name];
 
-    /// <summary>Gives every playing player enough questions to satisfy the minimum.</summary>
+    /// <summary>Gives every player enough questions to satisfy the minimum.</summary>
     public TestGame WithQuestions(int perPlayer = 4)
     {
-        Send(new OpenSubmissions { ActorId = HostId });
+        Send(new OpenSubmissions { ActorId = OwnerId });
 
         foreach (var (name, id) in Players)
         {
@@ -82,14 +87,18 @@ internal sealed class TestGame
         return this;
     }
 
-    /// <summary>Plays one complete round: spin settles, challenger picks, host judges.</summary>
+    /// <summary>
+    /// Plays one complete round: spin settles, challenger picks, challenger
+    /// judges. The verdict comes from inside the round — there is nobody
+    /// standing outside it to ask.
+    /// </summary>
     public TestGame PlayRound(RoundOutcome outcome = RoundOutcome.Success)
     {
         Tick(); // Spinning -> Choosing
 
         var round = State.CurrentRound!;
         Send(new ChooseQuestion(round.Hand[0]) { ActorId = round.ChallengerId });
-        Send(new Judge(outcome) { ActorId = HostId });
+        Send(new Judge(outcome) { ActorId = round.ChallengerId });
 
         Tick(); // Celebration -> Scoreboard
         return this;

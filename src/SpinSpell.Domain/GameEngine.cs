@@ -14,9 +14,13 @@ public static class Limits
     public const int MaxNameLength = 20;
     public const int MaxQuestionLength = 280;
     public const int MaxQuestionsPerPlayer = 30;
+    /// <summary>
+    /// Two people are a game. Everyone in the room plays, so this is a count of
+    /// humans present, not of humans minus whoever was running the screen.
+    /// </summary>
     public const int MinPlayersToStart = 2;
 
-    /// <summary>How long the host screen gets to run the spin animation (§6.3).</summary>
+    /// <summary>How long every phone gets to run the spin animation (§6.3).</summary>
     public const int SpinAnimationMs = 3200;
 
     /// <summary>Short and punchy — §6.3 explicitly does not want a cutscene.</summary>
@@ -49,7 +53,7 @@ public static class GameEngine
         Judge c => OnJudge(state, c, ctx),
         CelebrationFinished => OnCelebrationFinished(state),
         NextRound c => OnNextRound(state, c, ctx),
-        TransferHost c => OnTransferHost(state, c),
+        TransferOwner c => OnTransferOwner(state, c),
         EndGame c => OnEndGame(state, c, ctx),
         PhaseTimeout c => OnPhaseTimeout(state, c, ctx),
         _ => EngineResult.Unchanged(state)
@@ -86,12 +90,12 @@ public static class GameEngine
             return Reject(state, c, "room_full", $"This room is full ({Limits.MaxPlayers} max).");
         }
 
-        if (c.AsHost && state.Host is not null)
+        if (c.AsOwner && state.Owner is not null)
         {
-            return Reject(state, c, "host_exists", "This room already has a host.");
+            return Reject(state, c, "owner_exists", "This room already has an owner.");
         }
 
-        var player = Player.Create(c.PlayerId, name, NextColourSlot(state), c.AsHost, ctx.Now);
+        var player = Player.Create(c.PlayerId, name, NextColourSlot(state), c.AsOwner, ctx.Now);
         var next = state with { Players = [.. state.Players, player] };
 
         return new EngineResult(next, [new PlayerJoined(player), Progress(next)]);
@@ -117,7 +121,7 @@ public static class GameEngine
         }
 
         // Mid-game we only mark them gone — ripping a player out of an active
-        // round would invalidate the pairing the host screen is displaying.
+        // round would invalidate the pairing every phone is already showing.
         if (state.Phase is not (Phase.Lobby or Phase.Submission))
         {
             return OnSetConnected(state, new SetConnected(c.PlayerId, false));
@@ -131,12 +135,12 @@ public static class GameEngine
 
         List<GameEvent> events = [new PlayerLeft(c.PlayerId), Progress(next)];
 
-        // The host walking out of the lobby hands off rather than killing the room (§9.5).
-        if (leaving.IsHost && next.Players.Count > 0)
+        // The owner walking out of the lobby hands off rather than killing the room (§9.5).
+        if (leaving.IsOwner && next.Players.Count > 0)
         {
             var heir = next.Players.OrderBy(p => p.JoinedAt).First();
-            next = next.WithPlayer(heir with { IsHost = true });
-            events.Add(new HostChanged(heir.Id));
+            next = next.WithPlayer(heir with { IsOwner = true });
+            events.Add(new OwnerChanged(heir.Id));
         }
 
         return new EngineResult(next, events);
@@ -153,27 +157,27 @@ public static class GameEngine
         return new EngineResult(next, [new PlayerConnectionChanged(c.PlayerId, c.Connected)]);
     }
 
-    private static EngineResult OnTransferHost(GameState state, TransferHost c)
+    private static EngineResult OnTransferOwner(GameState state, TransferOwner c)
     {
-        if (state.PlayerById(c.NewHostId) is not { } heir)
+        if (state.PlayerById(c.NewOwnerId) is not { } heir)
         {
             return Reject(state, c, "unknown_player", "That player isn't in this room.");
         }
 
         // Server-originated handoff (grace period lapsed) carries no ActorId.
-        if (c.ActorId is { } actor && state.PlayerById(actor)?.IsHost != true)
+        if (c.ActorId is { } actor && state.PlayerById(actor)?.IsOwner != true)
         {
-            return Reject(state, c, "not_host", "Only the host can hand off hosting.");
+            return Reject(state, c, "not_owner", "Only the owner can hand the room over.");
         }
 
         var next = state;
-        if (state.Host is { } current)
+        if (state.Owner is { } current)
         {
-            next = next.WithPlayer(current with { IsHost = false });
+            next = next.WithPlayer(current with { IsOwner = false });
         }
-        next = next.WithPlayer(heir with { IsHost = true });
+        next = next.WithPlayer(heir with { IsOwner = true });
 
-        return new EngineResult(next, [new HostChanged(c.NewHostId)]);
+        return new EngineResult(next, [new OwnerChanged(c.NewOwnerId)]);
     }
 
     // ----------------------------------------------------------- submission
@@ -187,7 +191,7 @@ public static class GameEngine
     /// </summary>
     private static EngineResult OnSetQuestionMode(GameState state, SetQuestionMode c)
     {
-        if (RequireHost(state, c) is { } denied)
+        if (RequireOwner(state, c) is { } denied)
         {
             return denied;
         }
@@ -209,7 +213,7 @@ public static class GameEngine
 
     private static EngineResult OnOpenSubmissions(GameState state, OpenSubmissions c)
     {
-        if (RequireHost(state, c) is { } denied)
+        if (RequireOwner(state, c) is { } denied)
         {
             return denied;
         }
@@ -309,7 +313,7 @@ public static class GameEngine
             return Reject(state, c, "not_author", "That's not yours to edit.");
         }
 
-        // Once a question has been revealed on the host screen, rewriting it
+        // Once a question has been revealed to the room, rewriting it
         // would silently change what the room already saw.
         if (question.Used)
         {
@@ -341,7 +345,7 @@ public static class GameEngine
 
     private static EngineResult OnStartGame(GameState state, StartGame c, EngineContext ctx)
     {
-        if (RequireHost(state, c) is { } denied)
+        if (RequireOwner(state, c) is { } denied)
         {
             return denied;
         }
@@ -368,7 +372,7 @@ public static class GameEngine
 
     private static EngineResult OnNextRound(GameState state, NextRound c, EngineContext ctx)
     {
-        if (RequireHost(state, c) is { } denied)
+        if (RequireOwner(state, c) is { } denied)
         {
             return denied;
         }
@@ -383,7 +387,7 @@ public static class GameEngine
 
     /// <summary>
     /// Decides the pairing immediately and pushes it with an animation budget.
-    /// The host screen animates toward a result the server already knows — the
+    /// Every phone animates toward a result the server already knows — the
     /// phase advances on a server timer, never on a client callback (§2.3).
     /// </summary>
     private static EngineResult EnterSpin(GameState state, EngineContext ctx)
@@ -511,7 +515,7 @@ public static class GameEngine
             return Reject(state, c, "wrong_phase", "There's nothing to judge right now.");
         }
 
-        if (RequireHost(state, c) is { } denied)
+        if (RequireJudge(state, round, c) is { } denied)
         {
             return denied;
         }
@@ -566,6 +570,30 @@ public static class GameEngine
         return new EngineResult(next, [new PhaseChanged(Phase.Scoreboard, null)]);
     }
 
+    /// <summary>
+    /// The challenger judges: they picked the card, so they rule on it. That is
+    /// what lets a room of two play — the verdict comes from someone already in
+    /// the round rather than from a spare person sitting out.
+    ///
+    /// The single exception is a challenger whose phone has dropped. Nothing
+    /// else can close the round, so the owner may step in rather than let the
+    /// party stall on a locked screen.
+    /// </summary>
+    private static EngineResult? RequireJudge(GameState state, Round round, Judge c)
+    {
+        if (c.ActorId == round.ChallengerId)
+        {
+            return null;
+        }
+
+        var challengerIsGone = state.PlayerById(round.ChallengerId)?.Connected != true;
+        var actorIsOwner = c.ActorId is { } actor && state.PlayerById(actor)?.IsOwner == true;
+
+        return challengerIsGone && actorIsOwner
+            ? null
+            : Reject(state, c, "not_judge", "Whoever picked the card calls this one.");
+    }
+
     // --------------------------------------------------------------- timers
 
     /// <summary>
@@ -590,7 +618,7 @@ public static class GameEngine
                 Reveal(state, round, state.QuestionById(round.Hand[ctx.Random.Next(round.Hand.Count)])!, ctx),
 
             // The soft reveal timer is a nudge, not a punishment (§9.4) — it just
-            // moves the host screen along to the judgment buttons.
+            // moves the room along to the challenger's verdict buttons.
             Phase.Revealed => new EngineResult(
                 state with { Phase = Phase.Judging, PhaseDeadline = null },
                 [new PhaseChanged(Phase.Judging, null)]),
@@ -603,7 +631,7 @@ public static class GameEngine
 
     private static EngineResult OnEndGame(GameState state, EndGame c, EngineContext ctx)
     {
-        if (RequireHost(state, c) is { } denied)
+        if (RequireOwner(state, c) is { } denied)
         {
             return denied;
         }
@@ -615,7 +643,7 @@ public static class GameEngine
 
     private static EngineResult EndGameInternal(GameState state, EngineContext ctx)
     {
-        var standings = state.PlayingPlayers
+        var standings = state.Players
             .OrderByDescending(p => p.Score)
             .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -633,10 +661,10 @@ public static class GameEngine
 
     // -------------------------------------------------------------- helpers
 
-    private static EngineResult? RequireHost(GameState state, Command c) =>
-        c.ActorId is { } actor && state.PlayerById(actor)?.IsHost == true
+    private static EngineResult? RequireOwner(GameState state, Command c) =>
+        c.ActorId is { } actor && state.PlayerById(actor)?.IsOwner == true
             ? null
-            : Reject(state, c, "not_host", "Only the host can do that.");
+            : Reject(state, c, "not_owner", "Only whoever started the room can do that.");
 
     private static EngineResult Reject(GameState state, Command? c, string code, string message) =>
         new(state, [new CommandRejected(c?.ActorId, code, message)]);

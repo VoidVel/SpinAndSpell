@@ -19,7 +19,7 @@ export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecti
 /** A transient thing the UI should react to once, then forget. */
 export interface Cue {
   id: number
-  kind: 'spin' | 'judged' | 'error' | 'poolLow' | 'hostChanged'
+  kind: 'spin' | 'judged' | 'error' | 'poolLow' | 'ownerChanged'
   spin?: SpinResolvedEvent
   judged?: RoundJudgedEvent
   message?: string
@@ -84,7 +84,9 @@ export const useGame = create<GameStore>((set, get) => {
       hub.on('questionPoolLow', () =>
         pushCue({ kind: 'poolLow', message: 'Questions are running low — add a few more.' }),
       )
-      hub.on('hostChanged', () => pushCue({ kind: 'hostChanged', message: 'The host has changed.' }))
+      hub.on('ownerChanged', () =>
+        pushCue({ kind: 'ownerChanged', message: 'Someone else is running the room now.' }),
+      )
 
       hub.onreconnecting(() => set({ status: 'reconnecting' }))
       hub.onreconnected(async () => {

@@ -88,7 +88,7 @@ public sealed class RoomStore(SpinSpellDbContext db) : IRoomStore
     private static GameResultRecord Summarise(GameState state, DateTimeOffset now) => new()
     {
         RoomId = state.RoomId,
-        PlayerCount = state.PlayingPlayers.Count(),
+        PlayerCount = state.Players.Count,
         RoundsPlayed = state.RoundsPlayed,
         Skips = state.Skips,
         QuestionsSubmitted = state.Questions.Count,

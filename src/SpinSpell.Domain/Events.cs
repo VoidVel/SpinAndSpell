@@ -10,12 +10,11 @@ public abstract record GameEvent
     public virtual Audience Audience => Audience.Room;
 }
 
-public enum AudienceKind { Room, Host, Player }
+public enum AudienceKind { Room, Player }
 
 public readonly record struct Audience(AudienceKind Kind, Guid? PlayerId = null)
 {
     public static readonly Audience Room = new(AudienceKind.Room);
-    public static readonly Audience Host = new(AudienceKind.Host);
     public static Audience To(Guid playerId) => new(AudienceKind.Player, playerId);
 }
 
@@ -25,7 +24,7 @@ public sealed record PlayerLeft(Guid PlayerId) : GameEvent;
 
 public sealed record PlayerConnectionChanged(Guid PlayerId, bool Connected) : GameEvent;
 
-public sealed record HostChanged(Guid NewHostId) : GameEvent;
+public sealed record OwnerChanged(Guid NewOwnerId) : GameEvent;
 
 public sealed record QuestionModeChanged(QuestionMode Mode) : GameEvent;
 

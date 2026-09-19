@@ -109,10 +109,30 @@ public sealed class RoomRegistry(
 
     private RoomActor Attach(GameState state)
     {
-        var actor = new RoomActor(state, store, broadcaster, clock, loggerFactory.CreateLogger<RoomActor>());
+        var actor = new RoomActor(
+            EnsureOwner(state), store, broadcaster, clock, loggerFactory.CreateLogger<RoomActor>());
         actor.Evicted += Detach;
         _rooms[state.Code] = actor;
         return actor;
+    }
+
+    /// <summary>
+    /// A room with players but no owner cannot be started, advanced or ended —
+    /// the pacing controls belong to someone who is no longer there. Promoting
+    /// the earliest joiner covers both a state written before the room was
+    /// owned and the general case of an owner who never came back.
+    /// </summary>
+    private GameState EnsureOwner(GameState state)
+    {
+        if (state.Owner is not null || state.Players.Count == 0)
+        {
+            return state;
+        }
+
+        var heir = state.Players.OrderBy(p => p.JoinedAt).First();
+        logger.LogWarning("Room {Code} had no owner; promoting {Player}.", state.Code, heir.Name);
+
+        return state.WithPlayer(heir with { IsOwner = true });
     }
 
     private void Detach(RoomActor actor)

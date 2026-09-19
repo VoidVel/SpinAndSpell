@@ -80,7 +80,7 @@ public sealed class GameHub(RoomRegistry rooms, IClock clock, ILogger<GameHub> l
 
     public Task NextRound() => Send(new NextRound());
 
-    public Task TransferHost(Guid newHostId) => Send(new TransferHost(newHostId));
+    public Task TransferOwner(Guid newOwnerId) => Send(new TransferOwner(newOwnerId));
 
     public Task EndGame() => Send(new EndGame());
 

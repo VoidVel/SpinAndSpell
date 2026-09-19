@@ -5,14 +5,13 @@ using SpinSpell.Server.Rooms;
 namespace SpinSpell.Server.Endpoints;
 
 public sealed record CreateRoomRequest(
-    string HostName = "Host",
-    bool HostPlays = false,
+    string Name,
     int MinQuestionsPerPlayer = 4,
     bool TimerEnabled = false);
 
 public sealed record JoinRoomRequest(string Name);
 
-public sealed record JoinedResponse(string Token, Guid PlayerId, Guid RoomId, string Code, bool IsHost);
+public sealed record JoinedResponse(string Token, Guid PlayerId, Guid RoomId, string Code);
 
 public static class RoomEndpoints
 {
@@ -30,13 +29,14 @@ public static class RoomEndpoints
         {
             var settings = new RoomSettings(
                 MinQuestionsPerPlayer: Math.Clamp(request.MinQuestionsPerPlayer, 1, 10),
-                TimerEnabled: request.TimerEnabled,
-                HostPlays: request.HostPlays);
+                TimerEnabled: request.TimerEnabled);
 
             var room = await registry.CreateAsync(settings, ct);
-            var hostId = Guid.CreateVersion7();
+            var ownerId = Guid.CreateVersion7();
 
-            var result = await room.AskAsync(new JoinRoom(hostId, request.HostName, AsHost: true), ct);
+            // The creator joins their own room as an ordinary player. Owning it
+            // buys them the pacing controls and nothing else.
+            var result = await room.AskAsync(new JoinRoom(ownerId, request.Name, AsOwner: true), ct);
 
             if (Rejection(result) is { } rejected)
             {
@@ -44,7 +44,7 @@ public static class RoomEndpoints
             }
 
             return Results.Ok(new JoinedResponse(
-                tokens.Issue(room.RoomId, room.Code, hostId), hostId, room.RoomId, room.Code, IsHost: true));
+                tokens.Issue(room.RoomId, room.Code, ownerId), ownerId, room.RoomId, room.Code));
         });
 
         rooms.MapPost("/{code}/join", async (
@@ -62,7 +62,7 @@ public static class RoomEndpoints
             }
 
             var playerId = Guid.CreateVersion7();
-            var result = await room.AskAsync(new JoinRoom(playerId, request.Name, AsHost: false), ct);
+            var result = await room.AskAsync(new JoinRoom(playerId, request.Name, AsOwner: false), ct);
 
             // The engine owns name uniqueness and capacity, so the answer comes
             // back from the same place it would during play.
@@ -72,7 +72,7 @@ public static class RoomEndpoints
             }
 
             return Results.Ok(new JoinedResponse(
-                tokens.Issue(room.RoomId, room.Code, playerId), playerId, room.RoomId, room.Code, IsHost: false));
+                tokens.Issue(room.RoomId, room.Code, playerId), playerId, room.RoomId, room.Code));
         });
 
         // Does a code exist? Used by the join screen to fail fast before asking

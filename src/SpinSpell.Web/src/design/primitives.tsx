@@ -146,20 +146,38 @@ export function ChallengeCard({
 }
 
 /**
- * The host screen: built to be read from across a room, so it centres one thing
- * and pads generously. Player screens use PhoneShell instead (§6.4).
+ * Every screen in the app, because every screen is now somebody's phone. There
+ * is no second layout for a shared display: the room is the people holding
+ * phones, so one shell serves all of them.
  */
-export function StageShell({ children }: { children: ReactNode }) {
+export function PhoneShell({ children }: { children: ReactNode }) {
+  return <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col p-5">{children}</div>
+}
+
+/**
+ * A moment that takes the whole screen: the spin, the reveal, the celebration.
+ *
+ * These used to be the shared-screen's job. They now play in everyone's hand,
+ * so they break out of the shell's padding and get the full width rather than
+ * sitting politely in the column with the forms.
+ */
+export function Stage({
+  children,
+  glow,
+  className = '',
+}: {
+  children: ReactNode
+  glow?: string
+  className?: string
+}) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col items-center justify-center p-6 text-center">
+    <div
+      className={`-mx-5 flex flex-1 flex-col items-center justify-center gap-6 px-6 py-6 text-center ${className}`}
+      style={glow ? { background: `radial-gradient(120% 75% at 50% 0%, ${glow} 0%, transparent 70%)` } : undefined}
+    >
       {children}
     </div>
   )
-}
-
-/** The player's phone: denser, form-like, held close, one person at a time. */
-export function PhoneShell({ children }: { children: ReactNode }) {
-  return <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col p-5">{children}</div>
 }
 
 /** The room code, spaced out so it can be read aloud across a noisy room. */

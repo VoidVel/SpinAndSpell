@@ -13,7 +13,7 @@
 const REEL_LENGTH = 7
 
 interface LoaderProps {
-  /** 1 is the host screen. Around 0.6 suits a phone. */
+  /** 1 fills a screen on its own. Around 0.6 sits inside a busier one. */
   scale?: number
   label?: string
 }

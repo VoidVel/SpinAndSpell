@@ -68,7 +68,7 @@ Client ──SignalR──▶ Hub ──▶ Channel<Command> (per room)
                  (SignalR groups)        (on phase change)
 ```
 
-A party game's input is genuinely racy — the host taps *Success* while a player is still submitting, two clients ack a spin at once, someone rejoins mid-round. Serialising per room removes the entire class of problem instead of defending each path with locks. Volume per room is trivially low, so there's no cost.
+A party game's input is genuinely racy — the challenger taps *Success* while someone else is still submitting, two clients ack a spin at once, someone rejoins mid-round. Serialising per room removes the entire class of problem instead of defending each path with locks. Volume per room is trivially low, so there's no cost.
 
 Rooms idle-evict after 30 minutes and rehydrate from Postgres on demand.
 
@@ -76,7 +76,7 @@ Rooms idle-evict after 30 minutes and rehydrate from Postgres on demand.
 
 ### 2.3 Server decides, client renders
 
-The spin result is chosen server-side the moment the host taps, then pushed with an `animationMs` budget — the host screen animates *toward a known outcome*. Phases advance on a **server-side timer**, never on a client "animation finished" callback. A backgrounded phone or a closed laptop must not be able to wedge the game.
+The spin result is chosen server-side the moment the owner taps, then pushed with an `animationMs` budget — every phone animates *toward a known outcome*. Phases advance on a **server-side timer**, never on a client "animation finished" callback. A backgrounded phone or a closed laptop must not be able to wedge the game.
 
 ---
 
@@ -155,7 +155,7 @@ Players, questions, and rounds all live inside `state`. Saving happens on phase 
 
 Single hub at `/hub/game`. The hub is dumb: authenticate → validate shape → enqueue → return. No game logic in it.
 
-**Client → Server:** `JoinRoom(code, name)`, `Rejoin(token)`, `SubmitQuestion(kind, text)`, `DeleteQuestion(id)`, `StartGame()`, `Spin()`, `ChooseQuestion(id)`, `Judge(success|skip)`, `NextRound()`, `EndGame()`, `TransferHost(playerId)`.
+**Client → Server:** `JoinRoom(code, name)`, `Rejoin(token)`, `SubmitQuestion(kind, text)`, `DeleteQuestion(id)`, `StartGame()`, `Spin()`, `ChooseQuestion(id)`, `Judge(success|skip)`, `NextRound()`, `EndGame()`, `TransferOwner(playerId)`.
 
 **Server → Client:**
 
@@ -173,7 +173,7 @@ Single hub at `/hub/game`. The hub is dumb: authenticate → validate shape → 
 
 Clients never patch from a stale base — any doubt, re-`StateSync`. At this state size it's cheaper than reconciliation logic.
 
-**Privacy note:** the challenger's hand goes to a *connection*, not a group. This is correctness, not polish — leaking the hand to the host screen spoils the reveal (§7 of the source of truth).
+**Privacy note:** the challenger's hand goes to a *connection*, not a group. This is correctness, not polish — leaking the hand to anyone else's phone spoils the reveal (§7 of the source of truth).
 
 **Auth:** no signup wall. On join the server issues a short-lived JWT of `{ roomId, playerId, role }` into `sessionStorage`. It's a capability token for one room — the only authority the game needs.
 
@@ -205,7 +205,7 @@ Weighted-random rather than round-robin — self-correcting toward fairness whil
 
 **Skip:** zero points, question burned. Harsher of the two options in §12; it's one line to soften and the skip-rate metric will say whether to.
 
-**Pool exhaustion:** deal what's left below 3; at zero, the host screen prompts a top-up round rather than ending abruptly.
+**Pool exhaustion:** deal what's left below 3; at zero, the scoreboard prompts a top-up round rather than ending abruptly.
 
 ---
 
@@ -222,12 +222,12 @@ Solution scaffold, `docker compose up` (Postgres + API + Vite), initial migratio
 **Exit:** clone → one command → both shells load on a laptop and a phone over LAN.
 
 ### Phase 1 — Rooms & Presence · ~2 days ✅
-Room creation, 6-char code, join flow, colour assignment, SignalR lifecycle, `StateSync`, live lobby, host Start button with a disabled-reason.
-**Exit:** four phones join a laptop-hosted room and appear live.
+Room creation, 6-char code, join flow, colour assignment, SignalR lifecycle, `StateSync`, live lobby, owner Start button with a disabled-reason.
+**Exit:** two phones make a game; four all appear live.
 
 ### Phase 2 — Submission · ~1 day ✅
 Truth/dare toggle, fast repeated entry, per-player minimum, room-wide progress counts, start gating.
-**Exit:** a group can fill the pool and the host can start.
+**Exit:** a group can fill the pool — owner included — and the owner can start.
 
 ### Phase 3 — The Round Loop ⭐ · ~3 days ✅
 `SpinSpell.Domain` phase machine, fair rotation, hand dealing, private hand delivery, server-authoritative spin, reveal, judgment, scoring, scoreboard, end-game, final results.
@@ -242,7 +242,7 @@ The three peak moments from §6.3: the spin (slot-machine/wheel), the reveal (sn
 **Not garnish** — the source of truth calls the spin the product's signature. This phase is why Motion is in the stack.
 
 ### Phase 5 — Ship It · ~1–2 days
-Reconnect (token rejoin → `StateSync`), host-disconnect grace with a visible countdown then auto-handoff, room eviction, input length caps, keep-warm (§10), retention job, deploy.
+Reconnect (token rejoin → `StateSync`), owner-disconnect grace with a visible countdown then auto-handoff, room eviction, input length caps, keep-warm (§10), retention job, deploy.
 
 ---
 
@@ -280,7 +280,7 @@ Deliberately lopsided.
 
 ## 10. Deploy — and the Cold-Start Problem
 
-**This is a real conflict, not a nit.** A free-tier instance sleeps after ~15 minutes idle. State survives (that's what the `jsonb` snapshot is for), but the *host waits 30–60 seconds staring at nothing* while the container wakes. Time-to-first-challenge is one of the four fun-signals in §11, and party momentum dies during that wait — this is the single worst first impression the product can make.
+**This is a real conflict, not a nit.** A free-tier instance sleeps after ~15 minutes idle. State survives (that's what the `jsonb` snapshot is for), but *whoever started the room waits 30–60 seconds staring at nothing* while the container wakes. Time-to-first-challenge is one of the four fun-signals in §11, and party momentum dies during that wait — this is the single worst first impression the product can make.
 
 Three fixes, cheapest first:
 
@@ -300,9 +300,11 @@ Nothing here blocks a start; each has a default so work never stalls on a produc
 | --- | --- | --- |
 | Minimum questions per player | **4** | Config value |
 | Skip cost | **Zero points + question burned** | One engine rule |
-| Timer | **Host-toggleable, off by default** | Already in room settings |
-| End-game condition | **Host ends anytime** (per the §12 lean) | Thresholds are additive later |
-| Host disconnect | **60s grace with visible countdown, then handoff to longest-connected player** | Phase 5 — confirm before then |
+| Timer | **Owner-toggleable, off by default** | Already in room settings |
+| End-game condition | **Owner ends anytime** (per the §12 lean) | Thresholds are additive later |
+| Who judges | **The challenger, always** | They picked the card; reads the same at two players as at ten |
+| Owner disconnect | **60s grace with visible countdown, then handoff to longest-connected player** | Phase 5 — confirm before then |
+| Challenger disconnect mid-reveal | **Owner may call the round while they are gone** | Unblocks a deadlock; never overrules a challenger who is present |
 | Final name/tagline | `SpinSpell` internally, not blocking | Rises after deploy — decide before launch |
 
 ---

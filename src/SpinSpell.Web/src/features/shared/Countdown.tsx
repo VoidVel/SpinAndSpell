@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 
 /**
  * §9.4: a soft timer that adds energy without punishing anyone. It never ends
- * the round on its own — the server does that, and the host can judge at any
- * point regardless of what this shows.
+ * the round on its own — the server does that, and the challenger can call the
+ * round at any point regardless of what this shows.
  *
  * Offsets against the server clock so a phone with a skewed clock does not show
- * a different number from the host screen everyone is looking at.
+ * a different number from the phone next to it.
  */
 export function Countdown({ deadline, serverTime }: { deadline: string; serverTime: string }) {
   const [remaining, setRemaining] = useState(0)

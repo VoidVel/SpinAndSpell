@@ -107,7 +107,7 @@
   }
 }
 
-/* Big, glanceable type for the host screen, viewed from a few feet away (§6.1). */
+/* Big, glanceable type for the moments the whole room looks up for (§6.1). */
 @utility stage-title {
   font-family: var(--font-display);
   font-weight: 800;

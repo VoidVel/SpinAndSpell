@@ -63,7 +63,6 @@ public sealed class HubBroadcaster(
         IClientProxy target = audience.Kind switch
         {
             AudienceKind.Player when audience.PlayerId is { } id => hub.Clients.User(id.ToString()),
-            AudienceKind.Host when state.Host is { } host => hub.Clients.User(host.Id.ToString()),
             _ => hub.Clients.Group(GameHub.GroupFor(state.Code))
         };
 

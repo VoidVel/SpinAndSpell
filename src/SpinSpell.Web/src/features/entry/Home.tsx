@@ -7,9 +7,10 @@ import { DareBolt, TruthBubble } from '../../design/Motifs'
 import { Waiting } from '../../design/Loader'
 import { useGame } from '../../store/gameStore'
 
-type Mode = 'choose' | 'join' | 'creating'
+type Mode = 'choose' | 'start' | 'join' | 'creating'
 
 const CODE_LENGTH = 4
+const MAX_NAME = 20
 
 /** §7: zero friction. Two buttons, no signup wall. */
 export function Home() {
@@ -29,8 +30,8 @@ export function Home() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (scannedCode) nameRef.current?.focus()
-  }, [scannedCode])
+    if (mode === 'join' || mode === 'start') nameRef.current?.focus()
+  }, [mode])
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true)
@@ -39,19 +40,23 @@ export function Home() {
       await work()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Something went wrong.')
-      setMode(scannedCode || code ? 'join' : 'choose')
+      setMode(code ? 'join' : 'start')
     } finally {
       setBusy(false)
     }
   }
 
-  const host = () =>
+  // Starting a room now asks for your name like joining one does, because the
+  // person who starts it is a player in it — there is nobody called "Host".
+  const start = (e: React.FormEvent) => {
+    e.preventDefault()
     run(async () => {
       setMode('creating')
-      const session = await createRoom({ hostName: 'Host' })
+      const session = await createRoom(name.trim())
       await connect(session)
       navigate('/room')
     })
+  }
 
   const join = (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,6 +75,27 @@ export function Home() {
       </PhoneShell>
     )
   }
+
+  const nameField = (
+    <input
+      ref={nameRef}
+      value={name}
+      onChange={(e) => setName(e.target.value.slice(0, MAX_NAME))}
+      placeholder="Your name"
+      autoComplete="off"
+      className="w-full rounded-2xl border-2 border-edge bg-stage-sunken p-4 text-center text-xl outline-none placeholder:text-ink-dim/40 focus:border-ink-dim"
+    />
+  )
+
+  const back = (
+    <button
+      type="button"
+      onClick={() => setMode('choose')}
+      className="text-ink-dim underline underline-offset-4"
+    >
+      Back
+    </button>
+  )
 
   return (
     <PhoneShell>
@@ -91,27 +117,30 @@ export function Home() {
 
         {mode === 'choose' && (
           <div className="flex w-full flex-col gap-3">
-            <Button size="xl" full onClick={host} disabled={busy}>
-              Host a game
+            <Button size="xl" full onClick={() => setMode('start')}>
+              Start a game
             </Button>
             <Button variant="ghost" size="xl" full onClick={() => setMode('join')}>
               Join a game
             </Button>
+            <p className="text-sm text-ink-dim">Two players is enough.</p>
           </div>
+        )}
+
+        {mode === 'start' && (
+          <form onSubmit={start} className="flex w-full flex-col gap-4">
+            {nameField}
+            <Button type="submit" size="xl" full disabled={busy || !name.trim()}>
+              {busy ? 'Starting…' : 'Start the room'}
+            </Button>
+            {back}
+          </form>
         )}
 
         {mode === 'join' && (
           <form onSubmit={join} className="flex w-full flex-col gap-4">
             <CodeInput value={code} onChange={setCode} />
-
-            <input
-              ref={nameRef}
-              value={name}
-              onChange={(e) => setName(e.target.value.slice(0, 20))}
-              placeholder="Your name"
-              autoComplete="off"
-              className="w-full rounded-2xl border-2 border-edge bg-stage-sunken p-4 text-center text-xl outline-none placeholder:text-ink-dim/40 focus:border-ink-dim"
-            />
+            {nameField}
 
             <Button
               type="submit"
@@ -122,13 +151,7 @@ export function Home() {
               {busy ? 'Joining…' : 'Let me in'}
             </Button>
 
-            <button
-              type="button"
-              onClick={() => setMode('choose')}
-              className="text-ink-dim underline underline-offset-4"
-            >
-              Back
-            </button>
+            {back}
           </form>
         )}
 
@@ -151,14 +174,13 @@ export function Home() {
  * mobile keyboard all behave normally; the boxes are purely presentational.
  */
 function CodeInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const ref = useRef<HTMLInputElement>(null)
-
   return (
     <div className="relative">
       <input
-        ref={ref}
         value={value}
-        onChange={(e) => onChange(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH))}
+        onChange={(e) =>
+          onChange(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH))
+        }
         inputMode="text"
         autoCapitalize="characters"
         autoComplete="off"

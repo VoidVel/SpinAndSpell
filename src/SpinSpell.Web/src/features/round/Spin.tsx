@@ -12,8 +12,8 @@ const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)
  *
  * The result is already decided server-side before this ever runs (§2.3 of the
  * development plan) — this animates *toward* a known answer rather than picking
- * one. That is what makes it safe for the host to background their browser
- * mid-spin: the game advances on a server timer regardless of what this does.
+ * one. That is what makes it safe for a phone to lock mid-spin: the game
+ * advances on a server timer regardless of what this does.
  */
 function useReel(players: PlayerView[], landOn: number, startMs: number, durationMs: number) {
   const [index, setIndex] = useState(0)

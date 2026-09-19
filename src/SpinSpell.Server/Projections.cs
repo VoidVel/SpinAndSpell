@@ -6,7 +6,7 @@ public sealed record PlayerView(
     Guid Id,
     string Name,
     int ColourSlot,
-    bool IsHost,
+    bool IsOwner,
     int Score,
     bool Connected,
     int QuestionsSubmitted,
@@ -27,7 +27,6 @@ public sealed record SettingsView(
     bool TimerEnabled,
     int RevealTimerSeconds,
     int HandSize,
-    bool HostPlays,
     string Mode);
 
 /// <summary>
@@ -45,7 +44,7 @@ public sealed record RoomView(
     IReadOnlyList<PlayerView> Players,
     RoundView? Round,
     Guid YouId,
-    bool YouAreHost,
+    bool YouAreOwner,
     bool YouAreChallenger,
     bool YouAreTarget,
     IReadOnlyList<QuestionView> YourQuestions,
@@ -63,8 +62,8 @@ public static class Projections
         var revealed = state.Phase is Phase.Revealed or Phase.Judging or Phase.Celebration or Phase.Scoreboard;
 
         // The chosen question's text is only in the payload once it has actually
-        // been revealed on the host screen. Before that, nobody but the challenger
-        // has seen the hand it came from.
+        // been revealed to the room. Before that, nobody but the challenger has
+        // seen the hand it came from.
         var chosen = revealed && round?.ChosenQuestionId is { } id ? state.QuestionById(id) : null;
 
         return new RoomView(
@@ -77,7 +76,6 @@ public static class Projections
                 state.Settings.TimerEnabled,
                 state.Settings.RevealTimerSeconds,
                 state.Settings.HandSize,
-                state.Settings.HostPlays,
                 state.Settings.Mode.ToString()),
             Players: [.. state.Players.Select(p => ToView(state, p))],
             Round: round is null
@@ -90,7 +88,7 @@ public static class Projections
                     chosen?.Text,
                     round.Outcome?.ToString()),
             YouId: viewerId,
-            YouAreHost: state.PlayerById(viewerId)?.IsHost ?? false,
+            YouAreOwner: state.PlayerById(viewerId)?.IsOwner ?? false,
             YouAreChallenger: isChallenger,
             YouAreTarget: round?.TargetId == viewerId,
             YourQuestions: [.. state.Questions.Where(q => q.AuthorId == viewerId).Select(ToView)],
@@ -105,12 +103,11 @@ public static class Projections
     private static PlayerView ToView(GameState state, Player p)
     {
         var submitted = state.QuestionsBy(p.Id);
-        var plays = state.Settings.HostPlays || !p.IsHost;
 
         return new PlayerView(
-            p.Id, p.Name, p.ColourSlot, p.IsHost, p.Score, p.Connected,
+            p.Id, p.Name, p.ColourSlot, p.IsOwner, p.Score, p.Connected,
             QuestionsSubmitted: submitted,
-            MeetsMinimum: !plays || submitted >= state.Settings.MinQuestionsPerPlayer);
+            MeetsMinimum: submitted >= state.Settings.MinQuestionsPerPlayer);
     }
 
     private static QuestionView ToView(Question q) => new(q.Id, q.Kind.ToString(), q.Text);

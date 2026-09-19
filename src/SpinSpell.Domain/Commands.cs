@@ -10,7 +10,7 @@ public abstract record Command
     public Guid? ActorId { get; init; }
 }
 
-public sealed record JoinRoom(Guid PlayerId, string Name, bool AsHost) : Command;
+public sealed record JoinRoom(Guid PlayerId, string Name, bool AsOwner) : Command;
 
 public sealed record LeaveRoom(Guid PlayerId) : Command;
 
@@ -27,12 +27,12 @@ public sealed record DeleteQuestion(Guid QuestionId) : Command;
 /// </summary>
 public sealed record EditQuestion(Guid QuestionId, string Text) : Command;
 
-/// <summary>Host, in the lobby only. Truths, dares, or both.</summary>
+/// <summary>Owner, in the lobby only. Truths, dares, or both.</summary>
 public sealed record SetQuestionMode(QuestionMode Mode) : Command;
 
 public sealed record OpenSubmissions : Command;
 
-/// <summary>Host, from Submission. Enters the first spin.</summary>
+/// <summary>Owner, from Submission. Enters the first spin.</summary>
 public sealed record StartGame : Command;
 
 /// <summary>Server-originated: the spin animation window has elapsed.</summary>
@@ -40,6 +40,7 @@ public sealed record SpinSettled : Command;
 
 public sealed record ChooseQuestion(Guid QuestionId) : Command;
 
+/// <summary>The challenger's verdict on the round they set up.</summary>
 public sealed record Judge(RoundOutcome Outcome) : Command;
 
 /// <summary>Server-originated: the celebration animation window has elapsed.</summary>
@@ -47,7 +48,7 @@ public sealed record CelebrationFinished : Command;
 
 public sealed record NextRound : Command;
 
-public sealed record TransferHost(Guid NewHostId) : Command;
+public sealed record TransferOwner(Guid NewOwnerId) : Command;
 
 public sealed record EndGame : Command;
 

@@ -14,14 +14,14 @@ export type Phase =
 export type QuestionKind = 'Truth' | 'Dare'
 export type RoundOutcome = 'Success' | 'Skipped'
 
-/** What the host lets the room write. Chosen in the lobby, then locked. */
+/** What the room writes. The owner chooses in the lobby, then it locks. */
 export type QuestionMode = 'Both' | 'TruthsOnly' | 'DaresOnly'
 
 export interface PlayerView {
   id: string
   name: string
   colourSlot: number
-  isHost: boolean
+  isOwner: boolean
   score: number
   connected: boolean
   questionsSubmitted: number
@@ -48,7 +48,6 @@ export interface SettingsView {
   timerEnabled: boolean
   revealTimerSeconds: number
   handSize: number
-  hostPlays: boolean
   mode: QuestionMode
 }
 
@@ -61,7 +60,9 @@ export interface RoomView {
   players: PlayerView[]
   round: RoundView | null
   youId: string
-  youAreHost: boolean
+  /** Owning the room buys the pacing controls, nothing else. */
+  youAreOwner: boolean
+  /** The challenger picks the card and then rules on how it went. */
   youAreChallenger: boolean
   youAreTarget: boolean
   yourQuestions: QuestionView[]
@@ -76,7 +77,6 @@ export interface Session {
   playerId: string
   roomId: string
   code: string
-  isHost: boolean
 }
 
 /** Server-pushed events. These drive animation and tone; `state` is the truth. */

@@ -44,16 +44,17 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 export interface CreateRoomOptions {
-  hostName?: string
-  hostPlays?: boolean
   minQuestionsPerPlayer?: number
   timerEnabled?: boolean
 }
 
-export const createRoom = (options: CreateRoomOptions = {}) =>
+/**
+ * The creator joins their own room as an ordinary player, so this takes their
+ * real name — there is nobody sitting out to be called "Host".
+ */
+export const createRoom = (name: string, options: CreateRoomOptions = {}) =>
   post<Session>('/api/rooms', {
-    hostName: options.hostName ?? 'Host',
-    hostPlays: options.hostPlays ?? false,
+    name,
     minQuestionsPerPlayer: options.minQuestionsPerPlayer ?? 4,
     timerEnabled: options.timerEnabled ?? false,
   })

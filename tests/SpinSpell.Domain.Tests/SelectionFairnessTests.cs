@@ -19,8 +19,10 @@ public class SelectionFairnessTests
     private static GameState RoomOf(int playerCount)
     {
         var now = DateTimeOffset.UnixEpoch;
+        // P0 owns the room, and is in the pool exactly like everyone else —
+        // "nobody gets left out" has to hold for them too.
         var players = Enumerable.Range(0, playerCount)
-            .Select(i => Player.Create(IdFor(i), $"P{i}", i, isHost: false, now))
+            .Select(i => Player.Create(IdFor(i), $"P{i}", i, isOwner: i == 0, now))
             .ToList();
 
         return GameState.NewRoom(Guid.NewGuid(), "TEST01", new RoomSettings(), now) with
@@ -172,7 +174,7 @@ public class SelectionFairnessTests
             state = Advance(state, Selection.SelectPairing(state, random));
         }
 
-        var latecomer = Player.Create(IdFor(99), "Late", 4, isHost: false, DateTimeOffset.UnixEpoch);
+        var latecomer = Player.Create(IdFor(99), "Late", 4, isOwner: false, DateTimeOffset.UnixEpoch);
         state = state with { Players = [.. state.Players, latecomer] };
 
         for (var i = 0; i < 10; i++)
@@ -199,7 +201,7 @@ public class SelectionFairnessTests
             state = Advance(state, Selection.SelectPairing(state, random));
         }
 
-        var latecomer = Player.Create(IdFor(99), "Late", 4, isHost: false, DateTimeOffset.UnixEpoch);
+        var latecomer = Player.Create(IdFor(99), "Late", 4, isOwner: false, DateTimeOffset.UnixEpoch);
         var gapOnArrival = state.Players.Average(p => p.TurnsAsTarget);
         state = state with { Players = [.. state.Players, latecomer] };
 
